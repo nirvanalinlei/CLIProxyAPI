@@ -4,13 +4,26 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root_dir"
 
+gopath="$(go env GOPATH)"
+if [[ -n "$gopath" ]]; then
+  if [[ "$gopath" =~ ^[A-Za-z]:\\\\ ]]; then
+    drive="${gopath:0:1}"
+    rest="${gopath:2}"
+    rest="${rest//\\\\//}"
+    gopath="/${drive,,}/${rest}"
+  fi
+  export PATH="$gopath/bin:$PATH"
+fi
+
 if ! command -v go-bcov >/dev/null 2>&1; then
-  echo "go-bcov not found. Install with: go install github.com/ashanbrown/go-bcov@latest" >&2
+  echo "go-bcov not found. Install with: go install github.com/alx99/go-bcov@v1" >&2
   exit 1
 fi
 
 coverpkgs=(
   ./internal/config
+  ./internal/api/handlers/management
+  ./internal/watcher/diff
   ./internal/translator/openai/openai/responses
   ./internal/translator/openai/claude
   ./internal/runtime/executor
@@ -19,41 +32,42 @@ coverpkgs=(
 
 coverpkg=$(IFS=,; echo "${coverpkgs[*]}")
 
-go test ./... -coverpkg="$coverpkg" -coverprofile=coverage.out -covermode=atomic
+cover_out="$root_dir/coverage.out"
+cover_xml="$root_dir/coverage-branch.xml"
 
-branch_pct=$(
-  {
-    go-bcov -profile coverage.out -format json 2>/dev/null || go-bcov -profile coverage.out
-  } | python - <<'PY'
-import json
-import re
+go test ./... -coverpkg="$coverpkg" -coverprofile="$cover_out" -covermode=atomic
+
+go-bcov -format sonar-cover-report < "$cover_out" > "$cover_xml"
+branch_pct=$(python - <<'PY'
 import sys
-
-text = sys.stdin.read().strip()
-if not text:
-    sys.exit("no coverage output")
-
-def emit(value):
-    if value <= 1:
-        value *= 100
-    print(f"{value:.2f}")
+import xml.etree.ElementTree as ET
 
 try:
-    data = json.loads(text)
-    if isinstance(data, dict):
-        total = data.get("total") or data.get("summary") or data
-        for key in ("branch", "branches", "branch_coverage", "branchCoverage"):
-            if key in total:
-                emit(float(total[key]))
-                sys.exit(0)
-    raise ValueError("branch coverage not found in json")
-except Exception:
-    match = re.search(r"branches?[^0-9]*([0-9]+(?:\.[0-9]+)?)%", text, re.IGNORECASE)
-    if not match:
-        match = re.search(r"branch[^0-9]*([0-9]+(?:\.[0-9]+)?)", text, re.IGNORECASE)
-    if not match:
-        sys.exit("failed to parse branch coverage from go-bcov output")
-    emit(float(match.group(1)))
+    tree = ET.parse("coverage-branch.xml")
+except FileNotFoundError:
+    sys.exit("missing coverage-branch.xml")
+
+total = 0
+covered = 0
+for line in tree.iter():
+    if line.tag.endswith("lineToCover"):
+        branches = line.attrib.get("branchesToCover")
+        covered_branches = line.attrib.get("coveredBranches")
+        if branches is None:
+            continue
+        try:
+            b = int(branches)
+            c = int(covered_branches or 0)
+        except ValueError:
+            continue
+        total += b
+        covered += c
+
+if total == 0:
+    sys.exit("no branch data in coverage report")
+
+pct = covered / total * 100
+print(f"{pct:.2f}")
 PY
 )
 
