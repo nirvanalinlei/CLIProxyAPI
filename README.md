@@ -56,6 +56,13 @@ Get 10% OFF GLM CODING PLAN：https://z.ai/subscribe?ic=8JVLJQFSKB
 - OpenAI-compatible upstream providers via config (e.g., OpenRouter)
 - Reusable Go SDK for embedding the proxy (see `docs/sdk-usage.md`)
 
+## OpenAI-compat Wire API
+
+- Set `wire-api: "responses"` under an `openai-compatibility` provider to call upstream `/responses` (default is `/chat/completions`).
+- `alt=responses/compact` in the request query forces `/responses/compact`, regardless of `wire-api`.
+- Token counting still uses the chat format; `wire-api` only affects upstream wire protocol.
+- No fallback is attempted on non-2xx upstream responses.
+
 ## Getting Started
 
 CLIProxyAPI Guides: [https://help.router-for.me/](https://help.router-for.me/)

@@ -56,6 +56,13 @@ GLM CODING PLAN 是专为AI编码打造的订阅套餐，每月最低仅需20元
 - 通过配置接入上游 OpenAI 兼容提供商（例如 OpenRouter）
 - 可复用的 Go SDK（见 `docs/sdk-usage_CN.md`）
 
+## OpenAI 兼容上游 Wire API
+
+- 在 `openai-compatibility` 提供商下设置 `wire-api: "responses"`，即可转发到上游 `/responses`（默认仍为 `/chat/completions`）。
+- 请求中带 `alt=responses/compact` 会强制走 `/responses/compact`，并覆盖 `wire-api`。
+- 计费/Token 统计仍按 Chat 方式估算；`wire-api` 只影响上游协议选择。
+- 上游返回非 2xx 时不再尝试回退，直接返回错误。
+
 ## 新手入门
 
 CLIProxyAPI 用户手册： [https://help.router-for.me/](https://help.router-for.me/cn/)
