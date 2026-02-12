@@ -148,7 +148,9 @@ func openAICompatSignature(entry config.OpenAICompatibility) string {
 		parts = append(parts, "base="+v)
 	}
 	if v := strings.TrimSpace(entry.WireAPI); v != "" {
-		parts = append(parts, "wire_api="+strings.ToLower(v))
+		if config.NormalizeWireAPI(v) == "responses" {
+			parts = append(parts, "wire_api=responses")
+		}
 	}
 
 	models := make([]string, 0, len(entry.Models))
