@@ -185,3 +185,12 @@ func TestOpenAICompatKeyUsesModelNameWhenAliasEmpty(t *testing.T) {
 		t.Fatalf("expected model-name fallback, got %s/%s", key, label)
 	}
 }
+
+func TestDiffOpenAICompatibility_WireAPI(t *testing.T) {
+	oldList := []config.OpenAICompatibility{{Name: "p1", WireAPI: "chat"}}
+	newList := []config.OpenAICompatibility{{Name: "p1", WireAPI: "responses"}}
+	changes := DiffOpenAICompatibility(oldList, newList)
+	if len(changes) == 0 || !strings.Contains(changes[0], "wire-api") {
+		t.Fatalf("expected wire-api change, got %v", changes)
+	}
+}

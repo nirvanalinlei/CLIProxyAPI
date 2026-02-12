@@ -66,11 +66,16 @@ func describeOpenAICompatibilityUpdate(oldEntry, newEntry config.OpenAICompatibi
 	oldModelCount := countOpenAIModels(oldEntry.Models)
 	newModelCount := countOpenAIModels(newEntry.Models)
 	details := make([]string, 0, 3)
+	oldWire := config.NormalizeWireAPI(oldEntry.WireAPI)
+	newWire := config.NormalizeWireAPI(newEntry.WireAPI)
 	if oldKeyCount != newKeyCount {
 		details = append(details, fmt.Sprintf("api-keys %d -> %d", oldKeyCount, newKeyCount))
 	}
 	if oldModelCount != newModelCount {
 		details = append(details, fmt.Sprintf("models %d -> %d", oldModelCount, newModelCount))
+	}
+	if oldWire != newWire {
+		details = append(details, fmt.Sprintf("wire-api %s -> %s", oldWire, newWire))
 	}
 	if !equalStringMap(oldEntry.Headers, newEntry.Headers) {
 		details = append(details, "headers updated")
@@ -141,6 +146,9 @@ func openAICompatSignature(entry config.OpenAICompatibility) string {
 	}
 	if v := strings.TrimSpace(entry.BaseURL); v != "" {
 		parts = append(parts, "base="+v)
+	}
+	if v := strings.TrimSpace(entry.WireAPI); v != "" {
+		parts = append(parts, "wire_api="+strings.ToLower(v))
 	}
 
 	models := make([]string, 0, len(entry.Models))
