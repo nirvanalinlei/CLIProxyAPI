@@ -753,9 +753,12 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 }
 
 // NormalizeWireAPI normalizes the wire-api setting for openai-compat entries.
-// Supported values: "responses" or "chat" (default).
+// Supported values: "responses" or "chat" (default). Empty stays empty.
 func NormalizeWireAPI(v string) string {
 	v = strings.ToLower(strings.TrimSpace(v))
+	if v == "" {
+		return ""
+	}
 	if v == "responses" {
 		return "responses"
 	}
