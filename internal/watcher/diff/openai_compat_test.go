@@ -194,3 +194,10 @@ func TestDiffOpenAICompatibility_WireAPI(t *testing.T) {
 		t.Fatalf("expected wire-api change, got %v", changes)
 	}
 }
+
+func TestOpenAICompatSignature_WireAPIResponses(t *testing.T) {
+	entry := config.OpenAICompatibility{WireAPI: "responses"}
+	if sig := openAICompatSignature(entry); sig == "" {
+		t.Fatalf("expected wire-api signature to be non-empty")
+	}
+}

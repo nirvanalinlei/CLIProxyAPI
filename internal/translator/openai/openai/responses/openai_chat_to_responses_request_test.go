@@ -141,3 +141,30 @@ func TestConvertOpenAIChatToResponses_StreamOptionsIncludeUsage(t *testing.T) {
 		t.Fatalf("stream_options missing: %s", string(out))
 	}
 }
+
+func TestConvertOpenAIChatToResponses_MaxCompletionTokens(t *testing.T) {
+	in := []byte(`{"model":"gpt-4","max_completion_tokens":77}`)
+	out := ConvertOpenAIChatCompletionsRequestToOpenAIResponses("gpt-4", in, false)
+	if gjson.GetBytes(out, "max_output_tokens").Int() != 77 {
+		t.Fatalf("max_output_tokens = %s", string(out))
+	}
+}
+
+func TestConvertOpenAIChatToResponses_ReasoningObject(t *testing.T) {
+	in := []byte(`{"model":"gpt-4","reasoning":{"effort":"high","summary":"short"}}`)
+	out := ConvertOpenAIChatCompletionsRequestToOpenAIResponses("gpt-4", in, false)
+	if gjson.GetBytes(out, "reasoning.effort").String() != "high" {
+		t.Fatalf("reasoning.effort = %s", string(out))
+	}
+	if gjson.GetBytes(out, "reasoning.summary").String() != "short" {
+		t.Fatalf("reasoning.summary = %s", string(out))
+	}
+}
+
+func TestConvertOpenAIChatToResponses_IgnoresNonFunctionTools(t *testing.T) {
+	in := []byte(`{"model":"gpt-4","tools":[{"type":"file_search","file_search":{"max_results":1}}]}`)
+	out := ConvertOpenAIChatCompletionsRequestToOpenAIResponses("gpt-4", in, false)
+	if gjson.GetBytes(out, "tools").Exists() {
+		t.Fatalf("expected no tools mapped: %s", string(out))
+	}
+}

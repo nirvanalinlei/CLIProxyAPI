@@ -162,3 +162,53 @@ func TestResponsesToChat_NonStream_UsageMappedToChat(t *testing.T) {
 		t.Fatalf("reasoning usage missing: %s", out)
 	}
 }
+
+func TestResponsesToChat_Stream_ParamNilAndDoneIgnored(t *testing.T) {
+	req := []byte(`{"stream_options":{"include_usage":false}}`)
+	line := []byte(`data: {"type":"response.output_text.delta","item_id":"msg_1","delta":"hi","output_index":0}`)
+	out := ConvertOpenAIResponsesResponseToOpenAIChatCompletions(context.Background(), "gpt-4", req, req, line, nil)
+	if len(out) == 0 {
+		t.Fatalf("expected output with nil param")
+	}
+
+	done := []byte("data: [DONE]")
+	out = ConvertOpenAIResponsesResponseToOpenAIChatCompletions(context.Background(), "gpt-4", req, req, done, nil)
+	if out != nil {
+		t.Fatalf("expected nil for done marker: %v", out)
+	}
+}
+
+func TestResponsesToChat_Stream_ResponseCreatedUpdatesState(t *testing.T) {
+	var param any
+	req := []byte(`{"stream_options":{"include_usage":false}}`)
+	line := []byte(`data: {"type":"response.created","response":{"id":"resp_1","created_at":123}}`)
+	out := ConvertOpenAIResponsesResponseToOpenAIChatCompletions(context.Background(), "gpt-4", req, req, line, &param)
+	if out != nil {
+		t.Fatalf("expected no output: %v", out)
+	}
+	rp := param.(*responsesToChatParam)
+	if rp.State.ResponseID != "resp_1" || rp.State.Created != 123 {
+		t.Fatalf("state not updated: %+v", rp.State)
+	}
+}
+
+func TestResponsesToChat_MapUsageFallback(t *testing.T) {
+	base := `{"id":"x"}`
+	out := mapResponsesUsageToChat(base, gjson.Result{})
+	if out != base {
+		t.Fatalf("expected unchanged output")
+	}
+	usage := gjson.Parse(`{"foo":1}`)
+	out = mapResponsesUsageToChat(base, usage)
+	if gjson.Get(out, "usage.foo").Int() != 1 {
+		t.Fatalf("usage passthrough missing: %s", out)
+	}
+}
+
+func TestResponsesToChat_NonStream_TextType(t *testing.T) {
+	in := []byte(`{"id":"resp_2","object":"response","created_at":1,"output":[{"type":"message","role":"assistant","content":[{"type":"text","text":"hi"}]}]}`)
+	out := ConvertOpenAIResponsesResponseToOpenAIChatCompletionsNonStream(context.Background(), "gpt-4", nil, nil, in, nil)
+	if gjson.Get(out, "choices.0.message.content").String() != "hi" {
+		t.Fatalf("content missing: %s", out)
+	}
+}

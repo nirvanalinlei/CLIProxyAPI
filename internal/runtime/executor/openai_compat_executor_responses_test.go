@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
@@ -75,5 +76,59 @@ func TestOpenAICompatExecutor_WireResponses_ErrorNoFallback(t *testing.T) {
 	}
 	if hits != 1 {
 		t.Fatalf("expected single upstream hit, got %d", hits)
+	}
+}
+
+func TestOpenAICompatExecutor_StreamAltResponsesCompact(t *testing.T) {
+	var gotPath string
+	payload := strings.Join([]string{
+		"data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\"},\"output_index\":0}",
+		"data: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"delta\":\"hi\",\"output_index\":0}",
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"created_at\":1,\"status\":\"completed\"}}",
+		"",
+	}, "\n")
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.Path
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader(payload)),
+		}, nil
+	})
+
+	cfg := &config.Config{OpenAICompatibility: []config.OpenAICompatibility{{Name: "p1"}}}
+	executor := NewOpenAICompatExecutor("openai-compatibility", cfg)
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"base_url":    "http://example.test/v1",
+		"api_key":     "k",
+		"compat_name": "p1",
+	}}
+	reqPayload := []byte(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}`)
+	ctx := context.WithValue(context.Background(), "cliproxy.roundtripper", rt)
+	stream, err := executor.ExecuteStream(ctx, auth, cliproxyexecutor.Request{
+		Model:   "gpt-4",
+		Payload: reqPayload,
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("openai"), Stream: true, Alt: "responses/compact"})
+	if err != nil {
+		t.Fatalf("ExecuteStream error: %v", err)
+	}
+	for c := range stream {
+		if c.Err != nil {
+			t.Fatalf("stream err: %v", c.Err)
+		}
+	}
+	if gotPath != "/v1/responses/compact" {
+		t.Fatalf("path = %q", gotPath)
+	}
+}
+
+func TestOpenAICompatExecutor_ResolveWireAPIDefaultsToChat(t *testing.T) {
+	cfg := &config.Config{OpenAICompatibility: []config.OpenAICompatibility{{Name: "p1", WireAPI: "unknown"}}}
+	executor := NewOpenAICompatExecutor("openai-compatibility", cfg)
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"compat_name": "p1",
+	}}
+	if got := executor.resolveWireAPI(auth); got != "chat" {
+		t.Fatalf("expected chat default, got %q", got)
 	}
 }
