@@ -153,13 +153,8 @@ func resolveUsageSource(auth *cliproxyauth.Auth, ctxAPIKey string) string {
 				}
 			}
 		}
-		if kind, value := auth.AccountInfo(); value != "" {
-			if trimmed := strings.TrimSpace(value); trimmed != "" {
-				if strings.EqualFold(kind, "api_key") {
-					return maskUsageSourceAPIKey(trimmed)
-				}
-				return trimmed
-			}
+		if _, value := auth.AccountInfo(); value != "" {
+			return strings.TrimSpace(value)
 		}
 		if auth.Metadata != nil {
 			if email, ok := auth.Metadata["email"].(string); ok {
@@ -178,28 +173,6 @@ func resolveUsageSource(auth *cliproxyauth.Auth, ctxAPIKey string) string {
 		return trimmed
 	}
 	return ""
-}
-
-// maskUsageSourceAPIKey mirrors the WebUI mask format used by maskApiKey().
-// This keeps provider usage aggregation consistent for short placeholder keys
-// such as "any" while avoiding raw key leakage in usage snapshots.
-func maskUsageSourceAPIKey(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-
-	visibleChars := 2
-	if len(trimmed) < 4 {
-		visibleChars = 1
-	}
-	start := trimmed[:visibleChars]
-	end := trimmed[len(trimmed)-visibleChars:]
-	maskedLength := 10 - (visibleChars * 2)
-	if maskedLength < 1 {
-		maskedLength = 1
-	}
-	return start + strings.Repeat("*", maskedLength) + end
 }
 
 func parseCodexUsage(data []byte) (usage.Detail, bool) {
