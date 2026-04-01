@@ -67,6 +67,19 @@ func TestDiffOpenAICompatibility_RemovedAndUnchanged(t *testing.T) {
 	expectContains(t, changes, "provider removed: provider-a (api-keys=1, models=1)")
 }
 
+func TestDiffOpenAICompatibility_EnabledChanged(t *testing.T) {
+	disabled := false
+	oldList := []config.OpenAICompatibility{
+		{Name: "provider-a"},
+	}
+	newList := []config.OpenAICompatibility{
+		{Name: "provider-a", Enabled: &disabled},
+	}
+
+	changes := DiffOpenAICompatibility(oldList, newList)
+	expectContains(t, changes, "provider updated: provider-a (enabled true -> false)")
+}
+
 func TestOpenAICompatKeyFallbacks(t *testing.T) {
 	entry := config.OpenAICompatibility{
 		BaseURL: "http://base",

@@ -81,9 +81,18 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		return
 	}
 
+	wireAPI := config.OpenAIWireAPIChat
+	if compat := e.resolveCompatConfig(auth); compat != nil {
+		wireAPI = config.NormalizeOpenAIWireAPI(compat.WireAPI)
+	}
+
 	from := opts.SourceFormat
 	to := sdktranslator.FromString("openai")
 	endpoint := "/chat/completions"
+	if wireAPI == config.OpenAIWireAPIResponses {
+		to = sdktranslator.FromString("openai-response")
+		endpoint = "/responses"
+	}
 	if opts.Alt == "responses/compact" {
 		to = sdktranslator.FromString("openai-response")
 		endpoint = "/responses/compact"
@@ -93,8 +102,8 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		originalPayloadSource = opts.OriginalRequest
 	}
 	originalPayload := originalPayloadSource
-	originalTranslated := sdktranslator.TranslateRequest(from, to, baseModel, originalPayload, opts.Stream)
-	translated := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, opts.Stream)
+	originalTranslated := translateOpenAICompatRequest(from, to, baseModel, originalPayload, opts.Stream)
+	translated := translateOpenAICompatRequest(from, to, baseModel, req.Payload, opts.Stream)
 	requestedModel := payloadRequestedModel(opts, req.Model)
 	translated = applyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", translated, originalTranslated, requestedModel)
 	if opts.Alt == "responses/compact" {
@@ -169,9 +178,8 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	reporter.publish(ctx, parseOpenAIUsage(body))
 	// Ensure we at least record the request even if upstream doesn't return usage
 	reporter.ensurePublished(ctx)
-	// Translate response back to source format when needed
-	var param any
-	out := sdktranslator.TranslateNonStream(ctx, to, from, req.Model, opts.OriginalRequest, translated, body, &param)
+	// Translate response back to source format when needed.
+	out := translateOpenAICompatNonStreamResponse(ctx, from, to, req.Model, opts.OriginalRequest, translated, body)
 	resp = cliproxyexecutor.Response{Payload: out, Headers: httpResp.Header.Clone()}
 	return resp, nil
 }
@@ -188,15 +196,25 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		return nil, err
 	}
 
+	wireAPI := config.OpenAIWireAPIChat
+	if compat := e.resolveCompatConfig(auth); compat != nil {
+		wireAPI = config.NormalizeOpenAIWireAPI(compat.WireAPI)
+	}
+
 	from := opts.SourceFormat
 	to := sdktranslator.FromString("openai")
+	endpoint := "/chat/completions"
+	if wireAPI == config.OpenAIWireAPIResponses {
+		to = sdktranslator.FromString("openai-response")
+		endpoint = "/responses"
+	}
 	originalPayloadSource := req.Payload
 	if len(opts.OriginalRequest) > 0 {
 		originalPayloadSource = opts.OriginalRequest
 	}
 	originalPayload := originalPayloadSource
-	originalTranslated := sdktranslator.TranslateRequest(from, to, baseModel, originalPayload, true)
-	translated := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, true)
+	originalTranslated := translateOpenAICompatRequest(from, to, baseModel, originalPayload, true)
+	translated := translateOpenAICompatRequest(from, to, baseModel, req.Payload, true)
 	requestedModel := payloadRequestedModel(opts, req.Model)
 	translated = applyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", translated, originalTranslated, requestedModel)
 
@@ -205,11 +223,13 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		return nil, err
 	}
 
-	// Request usage data in the final streaming chunk so that token statistics
-	// are captured even when the upstream is an OpenAI-compatible provider.
-	translated, _ = sjson.SetBytes(translated, "stream_options.include_usage", true)
+	// Request usage data in the final streaming chunk for chat wire API, so token
+	// statistics are captured from OpenAI-compatible SSE streams.
+	if endpoint == "/chat/completions" {
+		translated, _ = sjson.SetBytes(translated, "stream_options.include_usage", true)
+	}
 
-	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
+	url := strings.TrimSuffix(baseURL, "/") + endpoint
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
 	if err != nil {
 		return nil, err
@@ -272,6 +292,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		scanner := bufio.NewScanner(httpResp.Body)
 		scanner.Buffer(nil, 52_428_800) // 50MB
 		var param any
+		chainState := &responseViaOpenAIState{}
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			appendAPIResponseChunk(ctx, e.cfg, line)
@@ -288,7 +309,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 
 			// OpenAI-compatible streams are SSE: lines typically prefixed with "data: ".
 			// Pass through translator; it yields one or more chunks for the target schema.
-			chunks := sdktranslator.TranslateStream(ctx, to, from, req.Model, opts.OriginalRequest, translated, bytes.Clone(line), &param)
+			chunks := translateOpenAICompatStreamResponse(ctx, from, to, req.Model, opts.OriginalRequest, translated, bytes.Clone(line), chainState, &param)
 			for i := range chunks {
 				out <- cliproxyexecutor.StreamChunk{Payload: chunks[i]}
 			}
@@ -307,9 +328,17 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 func (e *OpenAICompatExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
+	wireAPI := config.OpenAIWireAPIChat
+	if compat := e.resolveCompatConfig(auth); compat != nil {
+		wireAPI = config.NormalizeOpenAIWireAPI(compat.WireAPI)
+	}
+
 	from := opts.SourceFormat
 	to := sdktranslator.FromString("openai")
-	translated := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, false)
+	if wireAPI == config.OpenAIWireAPIResponses {
+		to = sdktranslator.FromString("openai-response")
+	}
+	translated := translateOpenAICompatRequest(from, to, baseModel, req.Payload, false)
 
 	modelForCounting := baseModel
 
@@ -369,6 +398,9 @@ func (e *OpenAICompatExecutor) resolveCompatConfig(auth *cliproxyauth.Auth) *con
 	}
 	for i := range e.cfg.OpenAICompatibility {
 		compat := &e.cfg.OpenAICompatibility[i]
+		if !compat.IsEnabled() {
+			continue
+		}
 		for _, candidate := range candidates {
 			if candidate != "" && strings.EqualFold(strings.TrimSpace(candidate), compat.Name) {
 				return compat
@@ -376,6 +408,85 @@ func (e *OpenAICompatExecutor) resolveCompatConfig(auth *cliproxyauth.Auth) *con
 		}
 	}
 	return nil
+}
+
+func translateOpenAICompatRequest(from, to sdktranslator.Format, model string, payload []byte, stream bool) []byte {
+	translated := sdktranslator.TranslateRequest(from, to, model, payload, stream)
+	if !shouldFallbackViaOpenAI(from, to, payload, translated) {
+		return translated
+	}
+	// Some source formats only define conversions to OpenAI chat-completions.
+	// For Responses wire API, route through OpenAI as an intermediate format.
+	viaOpenAI := sdktranslator.TranslateRequest(from, sdktranslator.FromString("openai"), model, payload, stream)
+	return sdktranslator.TranslateRequest(sdktranslator.FromString("openai"), to, model, viaOpenAI, stream)
+}
+
+func shouldFallbackViaOpenAI(from, to sdktranslator.Format, payload, translated []byte) bool {
+	if len(payload) == 0 || to.String() != "openai-response" {
+		return false
+	}
+	switch from.String() {
+	case "openai", "openai-response":
+		return false
+	}
+	// Translator registry returns the original payload when no direct converter exists.
+	return bytes.Equal(bytes.TrimSpace(payload), bytes.TrimSpace(translated))
+}
+
+type responseViaOpenAIState struct {
+	upstream any
+	openai   any
+}
+
+func translateOpenAICompatNonStreamResponse(ctx context.Context, from, to sdktranslator.Format, model string, originalRequestRawJSON, requestRawJSON, rawJSON []byte) []byte {
+	if !shouldFallbackResponseViaOpenAI(from, to) {
+		var param any
+		return sdktranslator.TranslateNonStream(ctx, to, from, model, originalRequestRawJSON, requestRawJSON, rawJSON, &param)
+	}
+
+	openaiFormat := sdktranslator.FromString("openai")
+	state := &responseViaOpenAIState{}
+	intermediate := sdktranslator.TranslateNonStream(ctx, to, openaiFormat, model, originalRequestRawJSON, requestRawJSON, rawJSON, &state.upstream)
+	return sdktranslator.TranslateNonStream(ctx, openaiFormat, from, model, originalRequestRawJSON, requestRawJSON, intermediate, &state.openai)
+}
+
+func translateOpenAICompatStreamResponse(ctx context.Context, from, to sdktranslator.Format, model string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, chainState *responseViaOpenAIState, param *any) [][]byte {
+	if !shouldFallbackResponseViaOpenAI(from, to) {
+		return sdktranslator.TranslateStream(ctx, to, from, model, originalRequestRawJSON, requestRawJSON, rawJSON, param)
+	}
+
+	if chainState == nil {
+		chainState = &responseViaOpenAIState{}
+	}
+	openaiFormat := sdktranslator.FromString("openai")
+	first := sdktranslator.TranslateStream(ctx, to, openaiFormat, model, originalRequestRawJSON, requestRawJSON, rawJSON, &chainState.upstream)
+	if len(first) == 0 {
+		return nil
+	}
+	out := make([][]byte, 0, len(first))
+	for _, chunk := range first {
+		second := sdktranslator.TranslateStream(ctx, openaiFormat, from, model, originalRequestRawJSON, requestRawJSON, chunk, &chainState.openai)
+		if len(second) > 0 {
+			out = append(out, second...)
+		}
+	}
+	return out
+}
+
+func shouldFallbackResponseViaOpenAI(from, to sdktranslator.Format) bool {
+	if to.String() != "openai-response" {
+		return false
+	}
+	switch from.String() {
+	case "openai", "openai-response":
+		return false
+	}
+	if sdktranslator.HasResponseTransformer(from, to) {
+		return false
+	}
+	openaiFormat := sdktranslator.FromString("openai")
+	return sdktranslator.HasResponseTransformer(openaiFormat, to) &&
+		sdktranslator.HasResponseTransformer(from, openaiFormat)
 }
 
 func (e *OpenAICompatExecutor) overrideModel(payload []byte, model string) []byte {

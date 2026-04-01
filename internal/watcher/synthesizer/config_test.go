@@ -292,6 +292,7 @@ func TestConfigSynthesizer_CodexKeys_SkipsEmptyAndHeaders(t *testing.T) {
 }
 
 func TestConfigSynthesizer_OpenAICompat(t *testing.T) {
+	disabled := false
 	tests := []struct {
 		name    string
 		compat  []config.OpenAICompatibility
@@ -344,6 +345,20 @@ func TestConfigSynthesizer_OpenAICompat(t *testing.T) {
 				},
 			},
 			wantLen: 1,
+		},
+		{
+			name: "disabled provider is skipped",
+			compat: []config.OpenAICompatibility{
+				{
+					Name:    "DisabledProvider",
+					BaseURL: "https://disabled.api.com",
+					Enabled: &disabled,
+					APIKeyEntries: []config.OpenAICompatibilityAPIKey{
+						{APIKey: "key-1"},
+					},
+				},
+			},
+			wantLen: 0,
 		},
 	}
 

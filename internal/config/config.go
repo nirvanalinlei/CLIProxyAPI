@@ -22,6 +22,8 @@ import (
 const (
 	DefaultPanelGitHubRepository = "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"
 	DefaultPprofAddr             = "127.0.0.1:8316"
+	OpenAIWireAPIChat            = "chat"
+	OpenAIWireAPIResponses       = "responses"
 )
 
 // Config represents the application's configuration, loaded from a YAML file.
@@ -488,6 +490,10 @@ type OpenAICompatibility struct {
 	// BaseURL is the base URL for the external OpenAI-compatible API endpoint.
 	BaseURL string `yaml:"base-url" json:"base-url"`
 
+	// Enabled controls whether this provider is active.
+	// nil means enabled for backward compatibility with older configs.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+
 	// APIKeyEntries defines API keys with optional per-key proxy configuration.
 	APIKeyEntries []OpenAICompatibilityAPIKey `yaml:"api-key-entries,omitempty" json:"api-key-entries,omitempty"`
 
@@ -496,6 +502,14 @@ type OpenAICompatibility struct {
 
 	// Headers optionally adds extra HTTP headers for requests sent to this provider.
 	Headers map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+
+	// WireAPI chooses the upstream OpenAI API flavor ("chat" or "responses").
+	WireAPI string `yaml:"wire-api,omitempty" json:"wire-api,omitempty"`
+}
+
+// IsEnabled reports whether the OpenAI compatibility provider should be active.
+func (o OpenAICompatibility) IsEnabled() bool {
+	return o.Enabled == nil || *o.Enabled
 }
 
 // OpenAICompatibilityAPIKey represents an API key configuration with optional proxy setting.
@@ -811,7 +825,9 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 		e.Name = strings.TrimSpace(e.Name)
 		e.Prefix = normalizeModelPrefix(e.Prefix)
 		e.BaseURL = strings.TrimSpace(e.BaseURL)
+		e.Enabled = normalizeOpenAICompatibilityEnabled(e.Enabled)
 		e.Headers = NormalizeHeaders(e.Headers)
+		e.WireAPI = NormalizeOpenAIWireAPI(e.WireAPI)
 		if e.BaseURL == "" {
 			// Skip providers with no base-url; treated as removed
 			continue
@@ -895,6 +911,18 @@ func normalizeModelPrefix(prefix string) string {
 	return trimmed
 }
 
+func normalizeOpenAICompatibilityEnabled(enabled *bool) *bool {
+	if enabled == nil {
+		return nil
+	}
+	value := *enabled
+	if value {
+		// Keep enabled providers compact in YAML by omitting the field.
+		return nil
+	}
+	return &value
+}
+
 // looksLikeBcrypt returns true if the provided string appears to be a bcrypt hash.
 func looksLikeBcrypt(s string) bool {
 	return len(s) > 4 && (s[:4] == "$2a$" || s[:4] == "$2b$" || s[:4] == "$2y$")
@@ -918,6 +946,20 @@ func NormalizeHeaders(headers map[string]string) map[string]string {
 		return nil
 	}
 	return clean
+}
+
+// NormalizeOpenAIWireAPI coerces wire-api to supported values ("chat" or "responses").
+// Defaults to "chat" when empty or unrecognized.
+func NormalizeOpenAIWireAPI(value string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	switch trimmed {
+	case OpenAIWireAPIResponses:
+		return OpenAIWireAPIResponses
+	case OpenAIWireAPIChat, "":
+		return OpenAIWireAPIChat
+	default:
+		return OpenAIWireAPIChat
+	}
 }
 
 // NormalizeExcludedModels trims, lowercases, and deduplicates model exclusion patterns.

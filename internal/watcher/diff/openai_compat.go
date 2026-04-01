@@ -66,6 +66,11 @@ func describeOpenAICompatibilityUpdate(oldEntry, newEntry config.OpenAICompatibi
 	oldModelCount := countOpenAIModels(oldEntry.Models)
 	newModelCount := countOpenAIModels(newEntry.Models)
 	details := make([]string, 0, 3)
+	oldEnabled := oldEntry.IsEnabled()
+	newEnabled := newEntry.IsEnabled()
+	if oldEnabled != newEnabled {
+		details = append(details, fmt.Sprintf("enabled %t -> %t", oldEnabled, newEnabled))
+	}
 	if oldKeyCount != newKeyCount {
 		details = append(details, fmt.Sprintf("api-keys %d -> %d", oldKeyCount, newKeyCount))
 	}
@@ -135,6 +140,10 @@ func openAICompatKey(entry config.OpenAICompatibility, index int) (string, strin
 
 func openAICompatSignature(entry config.OpenAICompatibility) string {
 	var parts []string
+
+	if !entry.IsEnabled() {
+		parts = append(parts, "enabled=false")
+	}
 
 	if v := strings.TrimSpace(entry.Name); v != "" {
 		parts = append(parts, "name="+strings.ToLower(v))

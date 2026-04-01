@@ -397,9 +397,11 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 		Name          *string                             `json:"name"`
 		Prefix        *string                             `json:"prefix"`
 		BaseURL       *string                             `json:"base-url"`
+		Enabled       *bool                               `json:"enabled"`
 		APIKeyEntries *[]config.OpenAICompatibilityAPIKey `json:"api-key-entries"`
 		Models        *[]config.OpenAICompatibilityModel  `json:"models"`
 		Headers       *map[string]string                  `json:"headers"`
+		WireAPI       *string                             `json:"wire-api"`
 	}
 	var body struct {
 		Name  *string            `json:"name"`
@@ -445,6 +447,10 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 		}
 		entry.BaseURL = trimmed
 	}
+	if body.Value.Enabled != nil {
+		enabled := *body.Value.Enabled
+		entry.Enabled = &enabled
+	}
 	if body.Value.APIKeyEntries != nil {
 		entry.APIKeyEntries = append([]config.OpenAICompatibilityAPIKey(nil), (*body.Value.APIKeyEntries)...)
 	}
@@ -453,6 +459,9 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 	}
 	if body.Value.Headers != nil {
 		entry.Headers = config.NormalizeHeaders(*body.Value.Headers)
+	}
+	if body.Value.WireAPI != nil {
+		entry.WireAPI = config.NormalizeOpenAIWireAPI(*body.Value.WireAPI)
 	}
 	normalizeOpenAICompatibilityEntry(&entry)
 	h.cfg.OpenAICompatibility[targetIndex] = entry
@@ -946,7 +955,9 @@ func normalizeOpenAICompatibilityEntry(entry *config.OpenAICompatibility) {
 	}
 	// Trim base-url; empty base-url indicates provider should be removed by sanitization
 	entry.BaseURL = strings.TrimSpace(entry.BaseURL)
+	entry.Enabled = normalizeOpenAICompatibilityEnabled(entry.Enabled)
 	entry.Headers = config.NormalizeHeaders(entry.Headers)
+	entry.WireAPI = config.NormalizeOpenAIWireAPI(entry.WireAPI)
 	existing := make(map[string]struct{}, len(entry.APIKeyEntries))
 	for i := range entry.APIKeyEntries {
 		trimmed := strings.TrimSpace(entry.APIKeyEntries[i].APIKey)
@@ -964,6 +975,10 @@ func normalizedOpenAICompatibilityEntries(entries []config.OpenAICompatibility) 
 	out := make([]config.OpenAICompatibility, len(entries))
 	for i := range entries {
 		copyEntry := entries[i]
+		if copyEntry.Enabled != nil {
+			enabled := *copyEntry.Enabled
+			copyEntry.Enabled = &enabled
+		}
 		if len(copyEntry.APIKeyEntries) > 0 {
 			copyEntry.APIKeyEntries = append([]config.OpenAICompatibilityAPIKey(nil), copyEntry.APIKeyEntries...)
 		}
@@ -971,6 +986,17 @@ func normalizedOpenAICompatibilityEntries(entries []config.OpenAICompatibility) 
 		out[i] = copyEntry
 	}
 	return out
+}
+
+func normalizeOpenAICompatibilityEnabled(enabled *bool) *bool {
+	if enabled == nil {
+		return nil
+	}
+	value := *enabled
+	if value {
+		return nil
+	}
+	return &value
 }
 
 func normalizeClaudeKey(entry *config.ClaudeKey) {
