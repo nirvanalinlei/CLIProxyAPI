@@ -20,10 +20,11 @@ func TestBuildConfigChangeDetails(t *testing.T) {
 			RestrictManagementToLocalhost: false,
 		},
 		RemoteManagement: config.RemoteManagement{
-			AllowRemote:           false,
-			SecretKey:             "old",
-			DisableControlPanel:   false,
-			PanelGitHubRepository: "repo-old",
+			AllowRemote:            false,
+			SecretKey:              "old",
+			DisableControlPanel:    false,
+			DisableAutoUpdatePanel: false,
+			PanelGitHubRepository:  "repo-old",
 		},
 		OAuthExcludedModels: map[string][]string{
 			"providerA": {"m1"},
@@ -54,10 +55,11 @@ func TestBuildConfigChangeDetails(t *testing.T) {
 			},
 		},
 		RemoteManagement: config.RemoteManagement{
-			AllowRemote:           true,
-			SecretKey:             "new",
-			DisableControlPanel:   true,
-			PanelGitHubRepository: "repo-new",
+			AllowRemote:            true,
+			SecretKey:              "new",
+			DisableControlPanel:    true,
+			DisableAutoUpdatePanel: true,
+			PanelGitHubRepository:  "repo-new",
 		},
 		OAuthExcludedModels: map[string][]string{
 			"providerA": {"m1", "m2"},
@@ -88,6 +90,7 @@ func TestBuildConfigChangeDetails(t *testing.T) {
 	expectContains(t, details, "ampcode.upstream-url: http://old-upstream -> http://new-upstream")
 	expectContains(t, details, "ampcode.model-mappings: updated (1 -> 2 entries)")
 	expectContains(t, details, "remote-management.allow-remote: false -> true")
+	expectContains(t, details, "remote-management.disable-auto-update-panel: false -> true")
 	expectContains(t, details, "remote-management.secret-key: updated")
 	expectContains(t, details, "oauth-excluded-models[providera]: updated (1 -> 2 entries)")
 	expectContains(t, details, "oauth-excluded-models[providerb]: added (1 entries)")
@@ -223,6 +226,7 @@ func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
 		UsageStatisticsEnabled: false,
 		DisableCooling:         false,
 		RequestRetry:           1,
+		MaxRetryCredentials:    1,
 		MaxRetryInterval:       1,
 		WebsocketAuth:          false,
 		QuotaExceeded:          config.QuotaExceeded{SwitchProject: false, SwitchPreviewModel: false},
@@ -246,6 +250,7 @@ func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
 		UsageStatisticsEnabled: true,
 		DisableCooling:         true,
 		RequestRetry:           2,
+		MaxRetryCredentials:    3,
 		MaxRetryInterval:       3,
 		WebsocketAuth:          true,
 		QuotaExceeded:          config.QuotaExceeded{SwitchProject: true, SwitchPreviewModel: true},
@@ -263,9 +268,10 @@ func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
 			ModelMappings:                 []config.AmpModelMapping{{From: "a", To: "b"}},
 		},
 		RemoteManagement: config.RemoteManagement{
-			DisableControlPanel:   true,
-			PanelGitHubRepository: "new/repo",
-			SecretKey:             "",
+			DisableControlPanel:    true,
+			DisableAutoUpdatePanel: true,
+			PanelGitHubRepository:  "new/repo",
+			SecretKey:              "",
 		},
 		SDKConfig: sdkconfig.SDKConfig{
 			RequestLog:                 true,
@@ -283,6 +289,7 @@ func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
 	expectContains(t, details, "disable-cooling: false -> true")
 	expectContains(t, details, "request-log: false -> true")
 	expectContains(t, details, "request-retry: 1 -> 2")
+	expectContains(t, details, "max-retry-credentials: 1 -> 3")
 	expectContains(t, details, "max-retry-interval: 1 -> 3")
 	expectContains(t, details, "proxy-url: http://old-proxy -> http://new-proxy")
 	expectContains(t, details, "ws-auth: false -> true")
@@ -296,6 +303,7 @@ func TestBuildConfigChangeDetails_FlagsAndKeys(t *testing.T) {
 	expectContains(t, details, "ampcode.restrict-management-to-localhost: false -> true")
 	expectContains(t, details, "ampcode.upstream-api-key: removed")
 	expectContains(t, details, "remote-management.disable-control-panel: false -> true")
+	expectContains(t, details, "remote-management.disable-auto-update-panel: false -> true")
 	expectContains(t, details, "remote-management.panel-github-repository: old/repo -> new/repo")
 	expectContains(t, details, "remote-management.secret-key: deleted")
 }
@@ -309,6 +317,7 @@ func TestBuildConfigChangeDetails_AllBranches(t *testing.T) {
 		UsageStatisticsEnabled: false,
 		DisableCooling:         false,
 		RequestRetry:           1,
+		MaxRetryCredentials:    1,
 		MaxRetryInterval:       1,
 		WebsocketAuth:          false,
 		QuotaExceeded:          config.QuotaExceeded{SwitchProject: false, SwitchPreviewModel: false},
@@ -332,10 +341,11 @@ func TestBuildConfigChangeDetails_AllBranches(t *testing.T) {
 			ForceModelMappings:            false,
 		},
 		RemoteManagement: config.RemoteManagement{
-			AllowRemote:           false,
-			DisableControlPanel:   false,
-			PanelGitHubRepository: "old/repo",
-			SecretKey:             "old",
+			AllowRemote:            false,
+			DisableControlPanel:    false,
+			DisableAutoUpdatePanel: false,
+			PanelGitHubRepository:  "old/repo",
+			SecretKey:              "old",
 		},
 		SDKConfig: sdkconfig.SDKConfig{
 			RequestLog: false,
@@ -361,6 +371,7 @@ func TestBuildConfigChangeDetails_AllBranches(t *testing.T) {
 		UsageStatisticsEnabled: true,
 		DisableCooling:         true,
 		RequestRetry:           2,
+		MaxRetryCredentials:    3,
 		MaxRetryInterval:       3,
 		WebsocketAuth:          true,
 		QuotaExceeded:          config.QuotaExceeded{SwitchProject: true, SwitchPreviewModel: true},
@@ -384,10 +395,11 @@ func TestBuildConfigChangeDetails_AllBranches(t *testing.T) {
 			ForceModelMappings:            true,
 		},
 		RemoteManagement: config.RemoteManagement{
-			AllowRemote:           true,
-			DisableControlPanel:   true,
-			PanelGitHubRepository: "new/repo",
-			SecretKey:             "",
+			AllowRemote:            true,
+			DisableControlPanel:    true,
+			DisableAutoUpdatePanel: true,
+			PanelGitHubRepository:  "new/repo",
+			SecretKey:              "",
 		},
 		SDKConfig: sdkconfig.SDKConfig{
 			RequestLog: true,
@@ -419,6 +431,7 @@ func TestBuildConfigChangeDetails_AllBranches(t *testing.T) {
 	expectContains(t, changes, "usage-statistics-enabled: false -> true")
 	expectContains(t, changes, "disable-cooling: false -> true")
 	expectContains(t, changes, "request-retry: 1 -> 2")
+	expectContains(t, changes, "max-retry-credentials: 1 -> 3")
 	expectContains(t, changes, "max-retry-interval: 1 -> 3")
 	expectContains(t, changes, "proxy-url: http://old-proxy -> http://new-proxy")
 	expectContains(t, changes, "ws-auth: false -> true")
@@ -454,6 +467,7 @@ func TestBuildConfigChangeDetails_AllBranches(t *testing.T) {
 	expectContains(t, changes, "oauth-excluded-models[p2]: added (1 entries)")
 	expectContains(t, changes, "remote-management.allow-remote: false -> true")
 	expectContains(t, changes, "remote-management.disable-control-panel: false -> true")
+	expectContains(t, changes, "remote-management.disable-auto-update-panel: false -> true")
 	expectContains(t, changes, "remote-management.panel-github-repository: old/repo -> new/repo")
 	expectContains(t, changes, "remote-management.secret-key: deleted")
 	expectContains(t, changes, "openai-compatibility:")
