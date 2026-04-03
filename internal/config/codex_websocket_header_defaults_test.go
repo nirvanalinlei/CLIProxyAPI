@@ -13,6 +13,8 @@ func TestLoadConfigOptional_CodexHeaderDefaults(t *testing.T) {
 codex-header-defaults:
   user-agent: "  my-codex-client/1.0  "
   beta-features: "  feature-a,feature-b  "
+  desktop-cloak: true
+  version: "  0.118.0-alpha.2  "
 `)
 	if err := os.WriteFile(configPath, configYAML, 0o600); err != nil {
 		t.Fatalf("failed to write config: %v", err)
@@ -28,5 +30,11 @@ codex-header-defaults:
 	}
 	if got := cfg.CodexHeaderDefaults.BetaFeatures; got != "feature-a,feature-b" {
 		t.Fatalf("BetaFeatures = %q, want %q", got, "feature-a,feature-b")
+	}
+	if cfg.CodexHeaderDefaults.DesktopCloak == nil || !*cfg.CodexHeaderDefaults.DesktopCloak {
+		t.Fatalf("DesktopCloak = %v, want true", cfg.CodexHeaderDefaults.DesktopCloak)
+	}
+	if got := cfg.CodexHeaderDefaults.Version; got != "0.118.0-alpha.2" {
+		t.Fatalf("Version = %q, want %q", got, "0.118.0-alpha.2")
 	}
 }

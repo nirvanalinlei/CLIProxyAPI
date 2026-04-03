@@ -265,6 +265,143 @@ func TestApplyCodexHeadersDoesNotInjectClientOnlyHeadersByDefault(t *testing.T) 
 	}
 }
 
+func TestApplyCodexWebsocketHeadersDesktopCloakForcesDesktopIdentity(t *testing.T) {
+	enabled := true
+	cfg := &config.Config{
+		CodexHeaderDefaults: config.CodexHeaderDefaults{
+			DesktopCloak: &enabled,
+			Version:      "0.119.0-alpha.1",
+		},
+	}
+	auth := &cliproxyauth.Auth{
+		Provider: "codex",
+		Metadata: map[string]any{
+			"email":      "user@example.com",
+			"account_id": "acct-123",
+		},
+	}
+	ctx := contextWithGinHeaders(map[string]string{
+		"Originator":  "codex_cli_rs",
+		"Version":     "0.1.0",
+		"User-Agent":  "client-ua",
+		"Session_id":  "session-from-client",
+		"OpenAI-Beta": "responses_websockets=2026-02-06,other-flag",
+	})
+
+	headers := applyCodexWebsocketHeaders(ctx, http.Header{}, auth, "oauth-token", cfg)
+
+	if got := headers.Get("User-Agent"); got != buildCodexDesktopUserAgent("0.119.0-alpha.1") {
+		t.Fatalf("User-Agent = %s, want %s", got, buildCodexDesktopUserAgent("0.119.0-alpha.1"))
+	}
+	if got := headers.Get("Originator"); got != codexDesktopOriginator {
+		t.Fatalf("Originator = %s, want %s", got, codexDesktopOriginator)
+	}
+	if got := headers.Get("Version"); got != "0.119.0-alpha.1" {
+		t.Fatalf("Version = %s, want %s", got, "0.119.0-alpha.1")
+	}
+	if got := headers.Get("Session_id"); got != "session-from-client" {
+		t.Fatalf("Session_id = %s, want %s", got, "session-from-client")
+	}
+	if got := headers.Get("X-Client-Request-Id"); got != "session-from-client" {
+		t.Fatalf("X-Client-Request-Id = %s, want %s", got, "session-from-client")
+	}
+	if got := headers.Get("Chatgpt-Account-Id"); got != "acct-123" {
+		t.Fatalf("Chatgpt-Account-Id = %s, want %s", got, "acct-123")
+	}
+	if got := headers.Get("OpenAI-Beta"); got != "responses_websockets=2026-02-06,other-flag" {
+		t.Fatalf("OpenAI-Beta = %s, want %s", got, "responses_websockets=2026-02-06,other-flag")
+	}
+	metadata := headers.Get("X-Codex-Turn-Metadata")
+	if gjson.Get(metadata, "session_id").String() != "session-from-client" {
+		t.Fatalf("metadata session_id = %s, want %s", gjson.Get(metadata, "session_id").String(), "session-from-client")
+	}
+	if gjson.Get(metadata, "sandbox").String() != codexDesktopSandbox {
+		t.Fatalf("metadata sandbox = %s, want %s", gjson.Get(metadata, "sandbox").String(), codexDesktopSandbox)
+	}
+}
+
+func TestApplyCodexHeadersDesktopCloakForcesDesktopIdentity(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://example.com/responses", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	enabled := true
+	cfg := &config.Config{
+		CodexHeaderDefaults: config.CodexHeaderDefaults{
+			DesktopCloak: &enabled,
+			Version:      "0.119.0-alpha.1",
+		},
+	}
+	auth := &cliproxyauth.Auth{
+		Provider: "codex",
+		Metadata: map[string]any{
+			"email":      "user@example.com",
+			"account_id": "acct-456",
+		},
+	}
+	req = req.WithContext(contextWithGinHeaders(map[string]string{
+		"Originator":            "codex_cli_rs",
+		"Version":               "0.1.0",
+		"User-Agent":            "client-ua",
+		"Session_id":            "session-from-client",
+		"X-Codex-Turn-Metadata": `{"turn_id":"turn-from-client"}`,
+		"X-Client-Request-Id":   "request-from-client",
+	}))
+
+	applyCodexHeaders(req, auth, "oauth-token", true, cfg)
+
+	if got := req.Header.Get("User-Agent"); got != buildCodexDesktopUserAgent("0.119.0-alpha.1") {
+		t.Fatalf("User-Agent = %s, want %s", got, buildCodexDesktopUserAgent("0.119.0-alpha.1"))
+	}
+	if got := req.Header.Get("Originator"); got != codexDesktopOriginator {
+		t.Fatalf("Originator = %s, want %s", got, codexDesktopOriginator)
+	}
+	if got := req.Header.Get("Version"); got != "0.119.0-alpha.1" {
+		t.Fatalf("Version = %s, want %s", got, "0.119.0-alpha.1")
+	}
+	if got := req.Header.Get("Session_id"); got != "session-from-client" {
+		t.Fatalf("Session_id = %s, want %s", got, "session-from-client")
+	}
+	if got := req.Header.Get("X-Client-Request-Id"); got != "request-from-client" {
+		t.Fatalf("X-Client-Request-Id = %s, want %s", got, "request-from-client")
+	}
+	if got := req.Header.Get("X-Codex-Turn-Metadata"); got != `{"turn_id":"turn-from-client"}` {
+		t.Fatalf("X-Codex-Turn-Metadata = %s, want %s", got, `{"turn_id":"turn-from-client"}`)
+	}
+	if got := req.Header.Get("Chatgpt-Account-Id"); got != "acct-456" {
+		t.Fatalf("Chatgpt-Account-Id = %s, want %s", got, "acct-456")
+	}
+}
+
+func TestApplyCodexHeadersDesktopCloakDoesNotAffectAPIKeyAuth(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://example.com/responses", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	enabled := true
+	cfg := &config.Config{
+		CodexHeaderDefaults: config.CodexHeaderDefaults{
+			DesktopCloak: &enabled,
+		},
+	}
+	auth := &cliproxyauth.Auth{
+		Provider:   "codex",
+		Attributes: map[string]string{"api_key": "sk-test"},
+	}
+
+	applyCodexHeaders(req, auth, "sk-test", true, cfg)
+
+	if got := req.Header.Get("User-Agent"); got != codexUserAgent {
+		t.Fatalf("User-Agent = %s, want %s", got, codexUserAgent)
+	}
+	if got := req.Header.Get("Originator"); got != "" {
+		t.Fatalf("Originator = %q, want empty", got)
+	}
+	if got := req.Header.Get("Version"); got != "" {
+		t.Fatalf("Version = %q, want empty", got)
+	}
+}
+
 func contextWithGinHeaders(headers map[string]string) context.Context {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()

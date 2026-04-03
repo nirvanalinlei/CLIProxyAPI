@@ -28,8 +28,12 @@ import (
 )
 
 const (
-	codexUserAgent  = "codex_cli_rs/0.116.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
-	codexOriginator = "codex_cli_rs"
+	codexUserAgent             = "codex_cli_rs/0.116.0 (Mac OS 26.0.1; arm64) Apple_Terminal/464"
+	codexOriginator            = "codex_cli_rs"
+	codexDesktopOriginator     = "Codex Desktop"
+	codexDesktopDefaultVersion = "0.118.0-alpha.2"
+	codexDesktopUserAgentFmt   = "Codex Desktop/%s (Windows 10.0.26200; x86_64) unknown (Codex Desktop; 26.325.31654)"
+	codexDesktopSandbox        = "windows_elevated"
 )
 
 var dataTag = []byte("data:")
@@ -648,19 +652,30 @@ func applyCodexHeaders(r *http.Request, auth *cliproxyauth.Auth, token string, s
 		ginHeaders = ginCtx.Request.Header
 	}
 
-	misc.EnsureHeader(r.Header, ginHeaders, "Version", "")
-	misc.EnsureHeader(r.Header, ginHeaders, "Session_id", uuid.NewString())
-	misc.EnsureHeader(r.Header, ginHeaders, "X-Codex-Turn-Metadata", "")
-	misc.EnsureHeader(r.Header, ginHeaders, "X-Client-Request-Id", "")
-	cfgUserAgent, _ := codexHeaderDefaults(cfg, auth)
-	ensureHeaderWithConfigPrecedence(r.Header, ginHeaders, "User-Agent", cfgUserAgent, codexUserAgent)
-
 	if stream {
 		r.Header.Set("Accept", "text/event-stream")
 	} else {
 		r.Header.Set("Accept", "application/json")
 	}
 	r.Header.Set("Connection", "Keep-Alive")
+
+	var attrs map[string]string
+	if auth != nil {
+		attrs = auth.Attributes
+	}
+
+	if codexDesktopCloakEnabled(cfg, auth) {
+		util.ApplyCustomHeadersFromAttrs(r, attrs)
+		applyCodexDesktopCloakHeaders(r.Header, ginHeaders, auth, cfg)
+		return
+	}
+
+	misc.EnsureHeader(r.Header, ginHeaders, "Version", "")
+	misc.EnsureHeader(r.Header, ginHeaders, "Session_id", uuid.NewString())
+	misc.EnsureHeader(r.Header, ginHeaders, "X-Codex-Turn-Metadata", "")
+	misc.EnsureHeader(r.Header, ginHeaders, "X-Client-Request-Id", "")
+	cfgUserAgent, _ := codexHeaderDefaults(cfg, auth)
+	ensureHeaderWithConfigPrecedence(r.Header, ginHeaders, "User-Agent", cfgUserAgent, codexUserAgent)
 
 	isAPIKey := false
 	if auth != nil && auth.Attributes != nil {
@@ -674,17 +689,123 @@ func applyCodexHeaders(r *http.Request, auth *cliproxyauth.Auth, token string, s
 		r.Header.Set("Originator", codexOriginator)
 	}
 	if !isAPIKey {
-		if auth != nil && auth.Metadata != nil {
-			if accountID, ok := auth.Metadata["account_id"].(string); ok {
-				r.Header.Set("Chatgpt-Account-Id", accountID)
-			}
+		if accountID := codexAccountID(auth); accountID != "" {
+			r.Header.Set("Chatgpt-Account-Id", accountID)
 		}
 	}
-	var attrs map[string]string
-	if auth != nil {
-		attrs = auth.Attributes
-	}
 	util.ApplyCustomHeadersFromAttrs(r, attrs)
+}
+
+func codexDesktopCloakEnabled(cfg *config.Config, auth *cliproxyauth.Auth) bool {
+	profile := resolveCodexHeaderProfile(cfg, auth)
+	return profile.desktopCloak
+}
+
+func codexDesktopVersion(cfg *config.Config) string {
+	if cfg != nil {
+		if version := strings.TrimSpace(cfg.CodexHeaderDefaults.Version); version != "" {
+			return version
+		}
+	}
+	return codexDesktopDefaultVersion
+}
+
+func buildCodexDesktopUserAgent(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		version = codexDesktopDefaultVersion
+	}
+	return fmt.Sprintf(codexDesktopUserAgentFmt, version)
+}
+
+func newCodexDesktopUUID() string {
+	if id, err := uuid.NewV7(); err == nil {
+		return id.String()
+	}
+	return uuid.NewString()
+}
+
+func firstNonEmptyHeaderValue(primary http.Header, secondary http.Header, key string) string {
+	if primary != nil {
+		if value := strings.TrimSpace(primary.Get(key)); value != "" {
+			return value
+		}
+	}
+	if secondary != nil {
+		if value := strings.TrimSpace(secondary.Get(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func applyCodexDesktopCloakHeaders(target http.Header, source http.Header, auth *cliproxyauth.Auth, cfg *config.Config) {
+	if target == nil {
+		return
+	}
+	version := codexDesktopVersion(cfg)
+	sessionID := firstNonEmptyHeaderValue(target, source, "Session_id")
+	if sessionID == "" {
+		sessionID = newCodexDesktopUUID()
+	}
+	requestID := firstNonEmptyHeaderValue(target, source, "X-Client-Request-Id")
+	if requestID == "" {
+		requestID = sessionID
+	}
+	metadata := firstNonEmptyHeaderValue(target, source, "X-Codex-Turn-Metadata")
+	if metadata == "" {
+		metadata = fmt.Sprintf(`{"session_id":%q,"turn_id":%q,"sandbox":%q}`,
+			sessionID,
+			newCodexDesktopUUID(),
+			codexDesktopSandbox,
+		)
+	}
+
+	target.Set("User-Agent", buildCodexDesktopUserAgent(version))
+	target.Set("Originator", codexDesktopOriginator)
+	target.Set("Version", version)
+	target.Set("Session_id", sessionID)
+	target.Set("X-Client-Request-Id", requestID)
+	target.Set("X-Codex-Turn-Metadata", metadata)
+	if accountID := codexAccountID(auth); accountID != "" {
+		target.Set("Chatgpt-Account-Id", accountID)
+	}
+}
+
+func codexAccountID(auth *cliproxyauth.Auth) string {
+	if auth == nil || auth.Metadata == nil {
+		return ""
+	}
+	accountID, _ := auth.Metadata["account_id"].(string)
+	return strings.TrimSpace(accountID)
+}
+
+type codexHeaderProfile struct {
+	userAgent    string
+	betaFeatures string
+	isAPIKey     bool
+	desktopCloak bool
+}
+
+func resolveCodexHeaderProfile(cfg *config.Config, auth *cliproxyauth.Auth) codexHeaderProfile {
+	profile := codexHeaderProfile{}
+	if auth == nil {
+		return profile
+	}
+	if auth.Attributes != nil {
+		if v := strings.TrimSpace(auth.Attributes["api_key"]); v != "" {
+			profile.isAPIKey = true
+		}
+	}
+	if cfg == nil {
+		return profile
+	}
+	profile.userAgent = strings.TrimSpace(cfg.CodexHeaderDefaults.UserAgent)
+	profile.betaFeatures = strings.TrimSpace(cfg.CodexHeaderDefaults.BetaFeatures)
+	if cfg.CodexHeaderDefaults.DesktopCloak != nil && *cfg.CodexHeaderDefaults.DesktopCloak && !profile.isAPIKey {
+		profile.desktopCloak = true
+	}
+	return profile
 }
 
 func newCodexStatusErr(statusCode int, body []byte) statusErr {

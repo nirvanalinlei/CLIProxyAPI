@@ -149,9 +149,12 @@ type ClaudeHeaderDefaults struct {
 // CodexHeaderDefaults configures fallback header values injected into Codex
 // model requests for OAuth/file-backed auth when the client omits them.
 // UserAgent applies to HTTP and websocket requests; BetaFeatures only applies to websockets.
+// DesktopCloak forces Codex OAuth requests to use a Codex Desktop-style identity.
 type CodexHeaderDefaults struct {
 	UserAgent    string `yaml:"user-agent" json:"user-agent"`
 	BetaFeatures string `yaml:"beta-features" json:"beta-features"`
+	DesktopCloak *bool  `yaml:"desktop-cloak,omitempty" json:"desktop-cloak,omitempty"`
+	Version      string `yaml:"version,omitempty" json:"version,omitempty"`
 }
 
 // TLSConfig holds HTTPS server settings.
@@ -758,6 +761,7 @@ func (cfg *Config) SanitizeCodexHeaderDefaults() {
 	}
 	cfg.CodexHeaderDefaults.UserAgent = strings.TrimSpace(cfg.CodexHeaderDefaults.UserAgent)
 	cfg.CodexHeaderDefaults.BetaFeatures = strings.TrimSpace(cfg.CodexHeaderDefaults.BetaFeatures)
+	cfg.CodexHeaderDefaults.Version = strings.TrimSpace(cfg.CodexHeaderDefaults.Version)
 }
 
 // SanitizeClaudeHeaderDefaults trims surrounding whitespace from the

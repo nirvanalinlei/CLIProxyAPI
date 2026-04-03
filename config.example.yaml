@@ -193,9 +193,10 @@ nonstream-keepalive-interval: 0
 # does not send the header. `user-agent` applies to HTTP and websocket requests;
 # `beta-features` only applies to websocket requests. They do not apply to codex-api-key entries.
 # codex-header-defaults:
+#   desktop-cloak: false   # optional: when true, force Codex OAuth requests to use Codex Desktop-style identity headers
 #   user-agent: "codex_cli_rs/0.114.0 (Mac OS 14.2.0; x86_64) vscode/1.111.0"
+#   version: "0.118.0-alpha.2"   # optional: desktop cloak version header; defaults internally when desktop-cloak=true
 #   beta-features: "multi_agent"
-
 # OpenAI compatibility providers
 # openai-compatibility:
 #   - name: "openrouter" # The name of the provider; it will be used in the user agent and other places.
