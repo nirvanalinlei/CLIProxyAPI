@@ -279,6 +279,23 @@ func (l *FileRequestLogger) logRequest(url, method string, requestHeaders map[st
 	if writeErr != nil {
 		return fmt.Errorf("failed to write log file: %w", writeErr)
 	}
+	if errUsage := writeUsageSummaryFile(
+		filePath,
+		url,
+		method,
+		body,
+		requestBodyPath,
+		statusCode,
+		responseHeaders,
+		responseToWrite,
+		"",
+		apiRequest,
+		apiResponse,
+		requestTimestamp,
+		apiResponseTimestamp,
+	); errUsage != nil {
+		log.WithError(errUsage).Warn("failed to write request usage summary file")
+	}
 
 	if force && !l.enabled {
 		if errCleanup := l.cleanupOldErrorLogs(); errCleanup != nil {
@@ -1138,6 +1155,26 @@ func (w *FileStreamingLogWriter) Close() error {
 		log.WithError(errClose).Warn("failed to close request log file")
 		if writeErr == nil {
 			writeErr = errClose
+		}
+	}
+
+	if writeErr == nil {
+		if errUsage := writeUsageSummaryFile(
+			w.logFilePath,
+			w.url,
+			w.method,
+			nil,
+			w.requestBodyPath,
+			w.responseStatus,
+			w.responseHeaders,
+			nil,
+			w.responseBodyPath,
+			w.apiRequest,
+			w.apiResponse,
+			w.timestamp,
+			w.apiResponseTimestamp,
+		); errUsage != nil {
+			log.WithError(errUsage).Warn("failed to write request usage summary file")
 		}
 	}
 
