@@ -57,6 +57,10 @@ func (e *CodexExecutor) PrepareRequest(req *http.Request, auth *cliproxyauth.Aut
 	if strings.TrimSpace(apiKey) != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
+	if codexDesktopCloakEnabled(e.cfg, auth) {
+		applyCodexPreparedHeaders(req, auth, e.cfg)
+		return nil
+	}
 	var attrs map[string]string
 	if auth != nil {
 		attrs = auth.Attributes
@@ -65,7 +69,22 @@ func (e *CodexExecutor) PrepareRequest(req *http.Request, auth *cliproxyauth.Aut
 	return nil
 }
 
-// HttpRequest injects Codex credentials into the request and executes it.
+func applyCodexPreparedHeaders(req *http.Request, auth *cliproxyauth.Auth, cfg *config.Config) {
+	if req == nil {
+		return
+	}
+	var attrs map[string]string
+	if auth != nil {
+		attrs = auth.Attributes
+	}
+	util.ApplyCustomHeadersFromAttrs(req, attrs)
+	var source http.Header
+	if req != nil {
+		source = req.Header.Clone()
+	}
+	applyCodexDesktopCloakHeaders(req.Header, source, auth, cfg)
+}
+
 func (e *CodexExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth, req *http.Request) (*http.Response, error) {
 	if req == nil {
 		return nil, fmt.Errorf("codex executor: request is nil")
