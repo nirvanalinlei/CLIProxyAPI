@@ -157,6 +157,8 @@ type Manager struct {
 	// It is initialized in NewManager; never Load() before first Store().
 	runtimeConfig atomic.Value
 
+	localConcurrency *localConcurrencyRegistry
+
 	// Optional HTTP RoundTripper provider injected by host.
 	rtProvider RoundTripperProvider
 
@@ -181,6 +183,7 @@ func NewManager(store Store, selector Selector, hook Hook) *Manager {
 		auths:            make(map[string]*Auth),
 		providerOffsets:  make(map[string]int),
 		modelPoolOffsets: make(map[string]int),
+		localConcurrency: newLocalConcurrencyRegistry(),
 		refreshSemaphore: make(chan struct{}, refreshMaxConcurrency),
 	}
 	// atomic.Value requires non-nil initial value.
@@ -211,6 +214,24 @@ func (m *Manager) syncScheduler() {
 		return
 	}
 	m.syncSchedulerFromSnapshot(m.snapshotAuths())
+}
+
+func (m *Manager) reconcileLocalConcurrency() {
+	if m == nil || m.localConcurrency == nil {
+		return
+	}
+	cfg, _ := m.runtimeConfig.Load().(*internalconfig.Config)
+	if cfg == nil {
+		cfg = &internalconfig.Config{}
+	}
+	m.localConcurrency.Replace(buildLocalConcurrencySnapshots(cfg, m.snapshotAuths()))
+}
+
+func (m *Manager) LocalConcurrencySnapshots() []LocalConcurrencySnapshot {
+	if m == nil || m.localConcurrency == nil {
+		return nil
+	}
+	return m.localConcurrency.Snapshots()
 }
 
 // RefreshSchedulerEntry re-upserts a single auth into the scheduler so that its
@@ -274,6 +295,7 @@ func (m *Manager) SetConfig(cfg *internalconfig.Config) {
 	}
 	m.runtimeConfig.Store(cfg)
 	m.rebuildAPIKeyModelAliasFromRuntimeConfig()
+	m.reconcileLocalConcurrency()
 }
 
 func (m *Manager) lookupAPIKeyUpstreamModel(authID, requestedModel string) string {
@@ -907,6 +929,7 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 	if m.scheduler != nil {
 		m.scheduler.upsertAuth(authClone)
 	}
+	m.reconcileLocalConcurrency()
 	_ = m.persist(ctx, auth)
 	m.hook.OnAuthRegistered(ctx, auth.Clone())
 	return auth.Clone(), nil
@@ -937,6 +960,7 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 	if m.scheduler != nil {
 		m.scheduler.upsertAuth(authClone)
 	}
+	m.reconcileLocalConcurrency()
 	_ = m.persist(ctx, auth)
 	m.hook.OnAuthUpdated(ctx, auth.Clone())
 	return auth.Clone(), nil
@@ -969,6 +993,7 @@ func (m *Manager) Load(ctx context.Context) error {
 	m.rebuildAPIKeyModelAliasLocked(cfg)
 	m.mu.Unlock()
 	m.syncScheduler()
+	m.reconcileLocalConcurrency()
 	return nil
 }
 

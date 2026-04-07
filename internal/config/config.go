@@ -354,6 +354,9 @@ type ClaudeKey struct {
 	// If empty, the default Claude API URL will be used.
 	BaseURL string `yaml:"base-url" json:"base-url"`
 
+	// Concurrency limits active upstream transport/connection count for this credential.
+	Concurrency int `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
+
 	// ProxyURL overrides the global proxy setting for this API key if provided.
 	ProxyURL string `yaml:"proxy-url" json:"proxy-url"`
 
@@ -402,6 +405,9 @@ type CodexKey struct {
 	// If empty, the default Codex API URL will be used.
 	BaseURL string `yaml:"base-url" json:"base-url"`
 
+	// Concurrency limits active upstream transport/connection count for this credential.
+	Concurrency int `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
+
 	// Websockets enables the Responses API websocket transport for this credential.
 	Websockets bool `yaml:"websockets,omitempty" json:"websockets,omitempty"`
 
@@ -449,6 +455,9 @@ type GeminiKey struct {
 	// BaseURL optionally overrides the Gemini API endpoint.
 	BaseURL string `yaml:"base-url,omitempty" json:"base-url,omitempty"`
 
+	// Concurrency limits active upstream transport/connection count for this credential.
+	Concurrency int `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
+
 	// ProxyURL optionally overrides the global proxy for this API key.
 	ProxyURL string `yaml:"proxy-url,omitempty" json:"proxy-url,omitempty"`
 
@@ -486,6 +495,9 @@ type OpenAICompatibility struct {
 	// Priority controls selection preference when multiple providers or credentials match.
 	// Higher values are preferred; defaults to 0.
 	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
+
+	// Concurrency limits active upstream transport/connection count for this compatibility scope.
+	Concurrency int `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
 
 	// Prefix optionally namespaces model aliases for this provider (e.g., "teamA/kimi-k2").
 	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
@@ -829,6 +841,7 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 		e.Name = strings.TrimSpace(e.Name)
 		e.Prefix = normalizeModelPrefix(e.Prefix)
 		e.BaseURL = strings.TrimSpace(e.BaseURL)
+		e.Concurrency = NormalizeConcurrencyValue(e.Concurrency)
 		e.Enabled = normalizeOpenAICompatibilityEnabled(e.Enabled)
 		e.Headers = NormalizeHeaders(e.Headers)
 		e.WireAPI = NormalizeOpenAIWireAPI(e.WireAPI)
@@ -852,6 +865,7 @@ func (cfg *Config) SanitizeCodexKeys() {
 		e := cfg.CodexKey[i]
 		e.Prefix = normalizeModelPrefix(e.Prefix)
 		e.BaseURL = strings.TrimSpace(e.BaseURL)
+		e.Concurrency = NormalizeConcurrencyValue(e.Concurrency)
 		e.Headers = NormalizeHeaders(e.Headers)
 		e.ExcludedModels = NormalizeExcludedModels(e.ExcludedModels)
 		if e.BaseURL == "" {
@@ -870,6 +884,7 @@ func (cfg *Config) SanitizeClaudeKeys() {
 	for i := range cfg.ClaudeKey {
 		entry := &cfg.ClaudeKey[i]
 		entry.Prefix = normalizeModelPrefix(entry.Prefix)
+		entry.Concurrency = NormalizeConcurrencyValue(entry.Concurrency)
 		entry.Headers = NormalizeHeaders(entry.Headers)
 		entry.ExcludedModels = NormalizeExcludedModels(entry.ExcludedModels)
 	}
@@ -892,6 +907,7 @@ func (cfg *Config) SanitizeGeminiKeys() {
 		entry.Prefix = normalizeModelPrefix(entry.Prefix)
 		entry.BaseURL = strings.TrimSpace(entry.BaseURL)
 		entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
+		entry.Concurrency = NormalizeConcurrencyValue(entry.Concurrency)
 		entry.Headers = NormalizeHeaders(entry.Headers)
 		entry.ExcludedModels = NormalizeExcludedModels(entry.ExcludedModels)
 		if _, exists := seen[entry.APIKey]; exists {

@@ -105,7 +105,11 @@ func NewHandlerWithoutConfigFilePath(cfg *config.Config, manager *coreauth.Manag
 }
 
 // SetConfig updates the in-memory config reference when the server hot-reloads.
-func (h *Handler) SetConfig(cfg *config.Config) { h.cfg = cfg }
+func (h *Handler) SetConfig(cfg *config.Config) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cfg = cfg
+}
 
 // SetAuthManager updates the auth manager reference used by management endpoints.
 func (h *Handler) SetAuthManager(manager *coreauth.Manager) { h.authManager = manager }
@@ -276,10 +280,25 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 func (h *Handler) persist(c *gin.Context) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.persistLocked(c)
+}
+
+// persistLocked saves the config while the caller already holds h.mu.
+func (h *Handler) persistLocked(c *gin.Context) bool {
 	// Preserve comments when writing
 	if err := config.SaveConfigPreserveComments(h.configFilePath, h.cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to save config: %v", err)})
 		return false
+	}
+	if h.authManager != nil {
+		runtimeCfg := h.cfg
+		if strings.TrimSpace(h.configFilePath) != "" {
+			if reloadedCfg, err := config.LoadConfig(h.configFilePath); err == nil && reloadedCfg != nil {
+				h.cfg = reloadedCfg
+				runtimeCfg = reloadedCfg
+			}
+		}
+		h.authManager.SetConfig(runtimeCfg)
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	return true

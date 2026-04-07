@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/watcher/diff"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
@@ -63,6 +64,7 @@ func (s *ConfigSynthesizer) synthesizeGeminiKeys(ctx *SynthesisContext) []*corea
 		if entry.Priority != 0 {
 			attrs["priority"] = strconv.Itoa(entry.Priority)
 		}
+		applyManagedSingleAuthConcurrencyAttrs(attrs, id, coreauth.LocalConcurrencySourceGeminiAPIKey, entry.Concurrency)
 		if base != "" {
 			attrs["base_url"] = base
 		}
@@ -110,6 +112,7 @@ func (s *ConfigSynthesizer) synthesizeClaudeKeys(ctx *SynthesisContext) []*corea
 		if ck.Priority != 0 {
 			attrs["priority"] = strconv.Itoa(ck.Priority)
 		}
+		applyManagedSingleAuthConcurrencyAttrs(attrs, id, coreauth.LocalConcurrencySourceClaudeAPIKey, ck.Concurrency)
 		if base != "" {
 			attrs["base_url"] = base
 		}
@@ -157,6 +160,7 @@ func (s *ConfigSynthesizer) synthesizeCodexKeys(ctx *SynthesisContext) []*coreau
 		if ck.Priority != 0 {
 			attrs["priority"] = strconv.Itoa(ck.Priority)
 		}
+		applyManagedSingleAuthConcurrencyAttrs(attrs, id, coreauth.LocalConcurrencySourceCodexAPIKey, ck.Concurrency)
 		if ck.BaseURL != "" {
 			attrs["base_url"] = ck.BaseURL
 		}
@@ -192,6 +196,10 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 	idGen := ctx.IDGenerator
 
 	out := make([]*coreauth.Auth, 0)
+	compatIssueByIndex := make(map[int]internalconfig.OpenAICompatibilityConcurrencyIssue)
+	for _, issue := range internalconfig.OpenAICompatibilityConcurrencyIssues(cfg.OpenAICompatibility) {
+		compatIssueByIndex[issue.Index] = issue
+	}
 	for i := range cfg.OpenAICompatibility {
 		compat := &cfg.OpenAICompatibility[i]
 		if !compat.IsEnabled() {
@@ -220,6 +228,11 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 			}
 			if compat.Priority != 0 {
 				attrs["priority"] = strconv.Itoa(compat.Priority)
+			}
+			if issue, ok := compatIssueByIndex[i]; ok {
+				applyManagedOpenAICompatibilityConcurrencyAttrs(attrs, *compat, &issue)
+			} else {
+				applyManagedOpenAICompatibilityConcurrencyAttrs(attrs, *compat, nil)
 			}
 			if key != "" {
 				attrs["api_key"] = key
@@ -254,6 +267,11 @@ func (s *ConfigSynthesizer) synthesizeOpenAICompat(ctx *SynthesisContext) []*cor
 			}
 			if compat.Priority != 0 {
 				attrs["priority"] = strconv.Itoa(compat.Priority)
+			}
+			if issue, ok := compatIssueByIndex[i]; ok {
+				applyManagedOpenAICompatibilityConcurrencyAttrs(attrs, *compat, &issue)
+			} else {
+				applyManagedOpenAICompatibilityConcurrencyAttrs(attrs, *compat, nil)
 			}
 			if hash := diff.ComputeOpenAICompatModelsHash(compat.Models); hash != "" {
 				attrs["models_hash"] = hash
@@ -300,6 +318,7 @@ func (s *ConfigSynthesizer) synthesizeVertexCompat(ctx *SynthesisContext) []*cor
 		if compat.Priority != 0 {
 			attrs["priority"] = strconv.Itoa(compat.Priority)
 		}
+		applyManagedSingleAuthConcurrencyAttrs(attrs, id, coreauth.LocalConcurrencySourceVertexAPIKey, compat.Concurrency)
 		if key != "" {
 			attrs["api_key"] = key
 		}

@@ -17,6 +17,9 @@ type VertexCompatKey struct {
 	// Higher values are preferred; defaults to 0.
 	Priority int `yaml:"priority,omitempty" json:"priority,omitempty"`
 
+	// Concurrency limits active upstream transport/connection count for this credential.
+	Concurrency int `yaml:"concurrency,omitempty" json:"concurrency,omitempty"`
+
 	// Prefix optionally namespaces model aliases for this credential (e.g., "teamA/vertex-pro").
 	Prefix string `yaml:"prefix,omitempty" json:"prefix,omitempty"`
 
@@ -72,6 +75,7 @@ func (cfg *Config) SanitizeVertexCompatKeys() {
 		entry.Prefix = normalizeModelPrefix(entry.Prefix)
 		entry.BaseURL = strings.TrimSpace(entry.BaseURL)
 		entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
+		entry.Concurrency = NormalizeConcurrencyValue(entry.Concurrency)
 		entry.Headers = NormalizeHeaders(entry.Headers)
 		entry.ExcludedModels = NormalizeExcludedModels(entry.ExcludedModels)
 

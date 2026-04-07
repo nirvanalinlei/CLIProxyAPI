@@ -2,6 +2,7 @@ package management
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -148,6 +149,7 @@ func (h *Handler) PatchGeminiKey(c *gin.Context) {
 		APIKey         *string            `json:"api-key"`
 		Prefix         *string            `json:"prefix"`
 		BaseURL        *string            `json:"base-url"`
+		Concurrency    *int               `json:"concurrency"`
 		ProxyURL       *string            `json:"proxy-url"`
 		Headers        *map[string]string `json:"headers"`
 		ExcludedModels *[]string          `json:"excluded-models"`
@@ -197,6 +199,9 @@ func (h *Handler) PatchGeminiKey(c *gin.Context) {
 	}
 	if body.Value.BaseURL != nil {
 		entry.BaseURL = strings.TrimSpace(*body.Value.BaseURL)
+	}
+	if body.Value.Concurrency != nil {
+		entry.Concurrency = config.NormalizeConcurrencyValue(*body.Value.Concurrency)
 	}
 	if body.Value.ProxyURL != nil {
 		entry.ProxyURL = strings.TrimSpace(*body.Value.ProxyURL)
@@ -274,6 +279,7 @@ func (h *Handler) PatchClaudeKey(c *gin.Context) {
 		APIKey         *string               `json:"api-key"`
 		Prefix         *string               `json:"prefix"`
 		BaseURL        *string               `json:"base-url"`
+		Concurrency    *int                  `json:"concurrency"`
 		ProxyURL       *string               `json:"proxy-url"`
 		Models         *[]config.ClaudeModel `json:"models"`
 		Headers        *map[string]string    `json:"headers"`
@@ -315,6 +321,9 @@ func (h *Handler) PatchClaudeKey(c *gin.Context) {
 	}
 	if body.Value.BaseURL != nil {
 		entry.BaseURL = strings.TrimSpace(*body.Value.BaseURL)
+	}
+	if body.Value.Concurrency != nil {
+		entry.Concurrency = config.NormalizeConcurrencyValue(*body.Value.Concurrency)
 	}
 	if body.Value.ProxyURL != nil {
 		entry.ProxyURL = strings.TrimSpace(*body.Value.ProxyURL)
@@ -381,22 +390,21 @@ func (h *Handler) PutOpenAICompat(c *gin.Context) {
 		}
 		arr = obj.Items
 	}
-	filtered := make([]config.OpenAICompatibility, 0, len(arr))
-	for i := range arr {
-		normalizeOpenAICompatibilityEntry(&arr[i])
-		if strings.TrimSpace(arr[i].BaseURL) != "" {
-			filtered = append(filtered, arr[i])
-		}
+	next, err := sanitizeOpenAICompatibilityEntries(arr)
+	if err != nil {
+		writeOpenAICompatibilityConcurrencyValidationError(c, err)
+		return
 	}
-	h.cfg.OpenAICompatibility = filtered
-	h.cfg.SanitizeOpenAICompatibility()
-	h.persist(c)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.replaceOpenAICompatibilityLocked(c, next)
 }
 func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 	type openAICompatPatch struct {
 		Name          *string                             `json:"name"`
 		Prefix        *string                             `json:"prefix"`
 		BaseURL       *string                             `json:"base-url"`
+		Concurrency   *int                                `json:"concurrency"`
 		Enabled       *bool                               `json:"enabled"`
 		APIKeyEntries *[]config.OpenAICompatibilityAPIKey `json:"api-key-entries"`
 		Models        *[]config.OpenAICompatibilityModel  `json:"models"`
@@ -412,6 +420,9 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid body"})
 		return
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	targetIndex := -1
 	if body.Index != nil && *body.Index >= 0 && *body.Index < len(h.cfg.OpenAICompatibility) {
 		targetIndex = *body.Index
@@ -430,7 +441,8 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 		return
 	}
 
-	entry := h.cfg.OpenAICompatibility[targetIndex]
+	next := normalizedOpenAICompatibilityEntries(h.cfg.OpenAICompatibility)
+	entry := next[targetIndex]
 	if body.Value.Name != nil {
 		entry.Name = strings.TrimSpace(*body.Value.Name)
 	}
@@ -440,12 +452,19 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 	if body.Value.BaseURL != nil {
 		trimmed := strings.TrimSpace(*body.Value.BaseURL)
 		if trimmed == "" {
-			h.cfg.OpenAICompatibility = append(h.cfg.OpenAICompatibility[:targetIndex], h.cfg.OpenAICompatibility[targetIndex+1:]...)
-			h.cfg.SanitizeOpenAICompatibility()
-			h.persist(c)
+			next = append(next[:targetIndex], next[targetIndex+1:]...)
+			next, err := sanitizeOpenAICompatibilityEntries(next)
+			if err != nil {
+				writeOpenAICompatibilityConcurrencyValidationError(c, err)
+				return
+			}
+			h.replaceOpenAICompatibilityLocked(c, next)
 			return
 		}
 		entry.BaseURL = trimmed
+	}
+	if body.Value.Concurrency != nil {
+		entry.Concurrency = config.NormalizeConcurrencyValue(*body.Value.Concurrency)
 	}
 	if body.Value.Enabled != nil {
 		enabled := *body.Value.Enabled
@@ -464,31 +483,40 @@ func (h *Handler) PatchOpenAICompat(c *gin.Context) {
 		entry.WireAPI = config.NormalizeOpenAIWireAPI(*body.Value.WireAPI)
 	}
 	normalizeOpenAICompatibilityEntry(&entry)
-	h.cfg.OpenAICompatibility[targetIndex] = entry
-	h.cfg.SanitizeOpenAICompatibility()
-	h.persist(c)
+	next[targetIndex] = entry
+	next, err := sanitizeOpenAICompatibilityEntries(next)
+	if err != nil {
+		writeOpenAICompatibilityConcurrencyValidationError(c, err)
+		return
+	}
+	h.replaceOpenAICompatibilityLocked(c, next)
 }
 
 func (h *Handler) DeleteOpenAICompat(c *gin.Context) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	next := normalizedOpenAICompatibilityEntries(h.cfg.OpenAICompatibility)
 	if name := c.Query("name"); name != "" {
-		out := make([]config.OpenAICompatibility, 0, len(h.cfg.OpenAICompatibility))
-		for _, v := range h.cfg.OpenAICompatibility {
+		out := make([]config.OpenAICompatibility, 0, len(next))
+		for _, v := range next {
 			if v.Name != name {
 				out = append(out, v)
 			}
 		}
-		h.cfg.OpenAICompatibility = out
-		h.cfg.SanitizeOpenAICompatibility()
-		h.persist(c)
+		shadow := &config.Config{OpenAICompatibility: out}
+		shadow.SanitizeOpenAICompatibility()
+		h.replaceOpenAICompatibilityLocked(c, shadow.OpenAICompatibility)
 		return
 	}
 	if idxStr := c.Query("index"); idxStr != "" {
 		var idx int
 		_, err := fmt.Sscanf(idxStr, "%d", &idx)
-		if err == nil && idx >= 0 && idx < len(h.cfg.OpenAICompatibility) {
-			h.cfg.OpenAICompatibility = append(h.cfg.OpenAICompatibility[:idx], h.cfg.OpenAICompatibility[idx+1:]...)
-			h.cfg.SanitizeOpenAICompatibility()
-			h.persist(c)
+		if err == nil && idx >= 0 && idx < len(next) {
+			next = append(next[:idx], next[idx+1:]...)
+			shadow := &config.Config{OpenAICompatibility: next}
+			shadow.SanitizeOpenAICompatibility()
+			h.replaceOpenAICompatibilityLocked(c, shadow.OpenAICompatibility)
 			return
 		}
 	}
@@ -532,6 +560,7 @@ func (h *Handler) PatchVertexCompatKey(c *gin.Context) {
 		APIKey         *string                     `json:"api-key"`
 		Prefix         *string                     `json:"prefix"`
 		BaseURL        *string                     `json:"base-url"`
+		Concurrency    *int                        `json:"concurrency"`
 		ProxyURL       *string                     `json:"proxy-url"`
 		Headers        *map[string]string          `json:"headers"`
 		Models         *[]config.VertexCompatModel `json:"models"`
@@ -589,6 +618,9 @@ func (h *Handler) PatchVertexCompatKey(c *gin.Context) {
 			return
 		}
 		entry.BaseURL = trimmed
+	}
+	if body.Value.Concurrency != nil {
+		entry.Concurrency = config.NormalizeConcurrencyValue(*body.Value.Concurrency)
 	}
 	if body.Value.ProxyURL != nil {
 		entry.ProxyURL = strings.TrimSpace(*body.Value.ProxyURL)
@@ -856,6 +888,7 @@ func (h *Handler) PatchCodexKey(c *gin.Context) {
 		APIKey         *string              `json:"api-key"`
 		Prefix         *string              `json:"prefix"`
 		BaseURL        *string              `json:"base-url"`
+		Concurrency    *int                 `json:"concurrency"`
 		ProxyURL       *string              `json:"proxy-url"`
 		Models         *[]config.CodexModel `json:"models"`
 		Headers        *map[string]string   `json:"headers"`
@@ -904,6 +937,9 @@ func (h *Handler) PatchCodexKey(c *gin.Context) {
 			return
 		}
 		entry.BaseURL = trimmed
+	}
+	if body.Value.Concurrency != nil {
+		entry.Concurrency = config.NormalizeConcurrencyValue(*body.Value.Concurrency)
 	}
 	if body.Value.ProxyURL != nil {
 		entry.ProxyURL = strings.TrimSpace(*body.Value.ProxyURL)
@@ -955,6 +991,7 @@ func normalizeOpenAICompatibilityEntry(entry *config.OpenAICompatibility) {
 	}
 	// Trim base-url; empty base-url indicates provider should be removed by sanitization
 	entry.BaseURL = strings.TrimSpace(entry.BaseURL)
+	entry.Concurrency = config.NormalizeConcurrencyValue(entry.Concurrency)
 	entry.Enabled = normalizeOpenAICompatibilityEnabled(entry.Enabled)
 	entry.Headers = config.NormalizeHeaders(entry.Headers)
 	entry.WireAPI = config.NormalizeOpenAIWireAPI(entry.WireAPI)
@@ -972,20 +1009,98 @@ func normalizedOpenAICompatibilityEntries(entries []config.OpenAICompatibility) 
 	if len(entries) == 0 {
 		return nil
 	}
-	out := make([]config.OpenAICompatibility, len(entries))
-	for i := range entries {
-		copyEntry := entries[i]
-		if copyEntry.Enabled != nil {
-			enabled := *copyEntry.Enabled
-			copyEntry.Enabled = &enabled
-		}
-		if len(copyEntry.APIKeyEntries) > 0 {
-			copyEntry.APIKeyEntries = append([]config.OpenAICompatibilityAPIKey(nil), copyEntry.APIKeyEntries...)
-		}
-		normalizeOpenAICompatibilityEntry(&copyEntry)
-		out[i] = copyEntry
+	out := cloneOpenAICompatibilityEntries(entries)
+	for i := range out {
+		normalizeOpenAICompatibilityEntry(&out[i])
 	}
 	return out
+}
+
+func (h *Handler) replaceOpenAICompatibilityLocked(c *gin.Context, next []config.OpenAICompatibility) bool {
+	old := cloneOpenAICompatibilityEntries(h.cfg.OpenAICompatibility)
+	h.cfg.OpenAICompatibility = cloneOpenAICompatibilityEntries(next)
+	if h.persistLocked(c) {
+		return true
+	}
+	h.cfg.OpenAICompatibility = old
+	return false
+}
+
+func sanitizeOpenAICompatibilityEntries(entries []config.OpenAICompatibility) ([]config.OpenAICompatibility, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	filtered := make([]config.OpenAICompatibility, 0, len(entries))
+	for i := range entries {
+		entry := entries[i]
+		normalizeOpenAICompatibilityEntry(&entry)
+		if strings.TrimSpace(entry.BaseURL) == "" {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	shadow := &config.Config{
+		OpenAICompatibility: append([]config.OpenAICompatibility(nil), filtered...),
+	}
+	shadow.SanitizeOpenAICompatibility()
+	if err := config.ValidateOpenAICompatibilityConcurrencyEntries(shadow.OpenAICompatibility); err != nil {
+		return nil, err
+	}
+	return shadow.OpenAICompatibility, nil
+}
+
+func cloneOpenAICompatibilityEntries(entries []config.OpenAICompatibility) []config.OpenAICompatibility {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]config.OpenAICompatibility, len(entries))
+	for i := range entries {
+		out[i] = cloneOpenAICompatibilityEntry(entries[i])
+	}
+	return out
+}
+
+func cloneOpenAICompatibilityEntry(entry config.OpenAICompatibility) config.OpenAICompatibility {
+	if entry.Enabled != nil {
+		enabled := *entry.Enabled
+		entry.Enabled = &enabled
+	}
+	if len(entry.APIKeyEntries) > 0 {
+		entry.APIKeyEntries = append([]config.OpenAICompatibilityAPIKey(nil), entry.APIKeyEntries...)
+	}
+	if len(entry.Models) > 0 {
+		entry.Models = append([]config.OpenAICompatibilityModel(nil), entry.Models...)
+		for i := range entry.Models {
+			if entry.Models[i].Thinking != nil {
+				thinking := *entry.Models[i].Thinking
+				thinking.Levels = append([]string(nil), thinking.Levels...)
+				entry.Models[i].Thinking = &thinking
+			}
+		}
+	}
+	if len(entry.Headers) > 0 {
+		headers := make(map[string]string, len(entry.Headers))
+		for k, v := range entry.Headers {
+			headers[k] = v
+		}
+		entry.Headers = headers
+	}
+	return entry
+}
+
+func writeOpenAICompatibilityConcurrencyValidationError(c *gin.Context, err error) {
+	if c == nil || err == nil {
+		return
+	}
+	var validationErr *config.OpenAICompatibilityConcurrencyValidationError
+	if errors.As(err, &validationErr) && validationErr != nil {
+		c.JSON(400, gin.H{
+			"error":  validationErr.Error(),
+			"issues": validationErr.Issues,
+		})
+		return
+	}
+	c.JSON(400, gin.H{"error": err.Error()})
 }
 
 func normalizeOpenAICompatibilityEnabled(enabled *bool) *bool {
@@ -1006,6 +1121,7 @@ func normalizeClaudeKey(entry *config.ClaudeKey) {
 	entry.APIKey = strings.TrimSpace(entry.APIKey)
 	entry.BaseURL = strings.TrimSpace(entry.BaseURL)
 	entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
+	entry.Concurrency = config.NormalizeConcurrencyValue(entry.Concurrency)
 	entry.Headers = config.NormalizeHeaders(entry.Headers)
 	entry.ExcludedModels = config.NormalizeExcludedModels(entry.ExcludedModels)
 	if len(entry.Models) == 0 {
@@ -1032,6 +1148,7 @@ func normalizeCodexKey(entry *config.CodexKey) {
 	entry.Prefix = strings.TrimSpace(entry.Prefix)
 	entry.BaseURL = strings.TrimSpace(entry.BaseURL)
 	entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
+	entry.Concurrency = config.NormalizeConcurrencyValue(entry.Concurrency)
 	entry.Headers = config.NormalizeHeaders(entry.Headers)
 	entry.ExcludedModels = config.NormalizeExcludedModels(entry.ExcludedModels)
 	if len(entry.Models) == 0 {
@@ -1058,6 +1175,7 @@ func normalizeVertexCompatKey(entry *config.VertexCompatKey) {
 	entry.Prefix = strings.TrimSpace(entry.Prefix)
 	entry.BaseURL = strings.TrimSpace(entry.BaseURL)
 	entry.ProxyURL = strings.TrimSpace(entry.ProxyURL)
+	entry.Concurrency = config.NormalizeConcurrencyValue(entry.Concurrency)
 	entry.Headers = config.NormalizeHeaders(entry.Headers)
 	entry.ExcludedModels = config.NormalizeExcludedModels(entry.ExcludedModels)
 	if len(entry.Models) == 0 {

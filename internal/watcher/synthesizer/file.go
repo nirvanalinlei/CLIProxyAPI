@@ -157,6 +157,7 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) []
 			}
 		}
 	}
+	applyReadonlyAuthFileConcurrencyAttrs(a, metadata)
 	ApplyAuthExcludedModelsMeta(a, cfg, perAccountExcluded, "oauth")
 	// For codex auth files, extract plan_type from the JWT id_token.
 	if provider == "codex" {
@@ -214,6 +215,7 @@ func SynthesizeGeminiVirtualAuths(primary *coreauth.Auth, metadata map[string]an
 	}
 	virtuals := make([]*coreauth.Auth, 0, len(projects))
 	for _, projectID := range projects {
+		virtualID := buildGeminiVirtualID(primary.ID, projectID)
 		attrs := map[string]string{
 			"runtime_only":           "true",
 			"gemini_virtual_parent":  primary.ID,
@@ -233,6 +235,7 @@ func SynthesizeGeminiVirtualAuths(primary *coreauth.Auth, metadata map[string]an
 		if noteVal, hasNote := primary.Attributes["note"]; hasNote && noteVal != "" {
 			attrs["note"] = noteVal
 		}
+		propagateConcurrencyAttrsForAuthID(attrs, primary.Attributes, virtualID)
 		metadataCopy := map[string]any{
 			"email":             email,
 			"project_id":        projectID,
@@ -255,7 +258,7 @@ func SynthesizeGeminiVirtualAuths(primary *coreauth.Auth, metadata map[string]an
 			metadataCopy["proxy_url"] = proxy
 		}
 		virtual := &coreauth.Auth{
-			ID:         buildGeminiVirtualID(primary.ID, projectID),
+			ID:         virtualID,
 			Provider:   originalProvider,
 			Label:      fmt.Sprintf("%s [%s]", label, projectID),
 			Status:     coreauth.StatusActive,
